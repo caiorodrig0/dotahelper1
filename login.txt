@@ -1,0 +1,44 @@
+public class Login {
+
+    private String usuario;
+    private String senha;
+    private MongoClient mongoClient;
+    private MongoCollection<Document> collection;
+
+    public Login(String usuario, String senha, MongoClient mongoClient) {
+        this.usuario = usuario;
+        this.senha = senha;
+        this.mongoClient = mongoClient;
+        this.collection = mongoClient.getDatabase("database").getCollection("login");
+    }
+
+    public boolean verificarLogin() {
+        Document query = new Document("usuario", usuario);
+        query.append("senha", senha);
+
+        FindIterable<Document> results = collection.find(query);
+        return results.first() != null;
+    }
+
+    public void recuperarLogin() {
+        Scanner scanner = new Scanner(System.in);
+        System.out.println("Informe o seu nome de usuário:");
+        String usuario = scanner.next();
+        System.out.println("Informe a sua pergunta secreta:");
+        String perguntaSecreta = scanner.next();
+
+        Document query = new Document("usuario", usuario);
+        query.append("perguntaSecreta", perguntaSecreta);
+
+        FindIterable<Document> results = collection.find(query);
+        Document result = results.first();
+
+        if (result != null) {
+            usuario = result.getString("usuario");
+            senha = result.getString("senha");
+            System.out.println("Sua senha é: " + senha);
+        } else {
+            System.out.println("Usuário ou pergunta secreta incorretos");
+        }
+    }
+}

@@ -1,0 +1,532 @@
+package com.whitelabel.services.impl;
+
+import com.google.common.collect.Lists;
+import com.onefinancial.architecture.exception.BusinessUncheckedException;
+import com.whitelabel.api.model.*;
+import com.whitelabel.clients.camunda.CamundaServiceApi;
+import com.whitelabel.clients.contract.ContractServiceApi;
+import com.whitelabel.clients.contract.dtos.AmortizationDTO;
+import com.whitelabel.clients.contract.dtos.LoanDTO;
+import com.whitelabel.clients.contract.dtos.OverdueFeeDTO;
+import com.whitelabel.enums.CamundaStagesEnum;
+import com.whitelabel.persistence.*;
+import com.whitelabel.persistence.repository.*;
+import com.whitelabel.services.OccurrenceServiceApi;
+import com.whitelabel.clients.occurrence.dtos.AttendanceResponseDTO;
+import com.whitelabel.clients.occurrence.dtos.calculation.*;
+import com.whitelabel.enums.FeeCodeEnum;
+import com.whitelabel.enums.PaymentTypeEnum;
+import com.whitelabel.services.GenericParameterService;
+import com.whitelabel.services.InstallmentsCalculationService;
+import com.whitelabel.services.dtos.GenericParameterValuesDTO;
+import com.whitelabel.utils.*;
+import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+
+import javax.validation.Valid;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@AllArgsConstructor
+public class InstallmentCalculationServiceImpl implements InstallmentsCalculationService {
+
+    private static final String INSTALLMENT_NOT_FOUND = "Installment Not Found";
+    private static final List<String> TAXES = Lists.newArrayList("IOF", "IOFAD");
+
+    private final OccurrenceServiceApi occurrenceService;
+    private final ContractServiceApi contractService;
+    private final PlanParameterRepository planParameterRepository;
+    private final RenegotiationRepository renegotiationRepository;
+    private final AdditionalAttributeValueRepository additionalAttributeValueRepository;
+    private final GenericParameterService genericParameterService;
+
+    @Override
+    public CalculateRenegResponseDTO calculate(Long attendanceId, CalculateRenegRequestDTO request) {
+        log.debug("calculate - request:{}", request);
+
+        // Contract Data
+        AttendanceResponseDTO occurrence = occurrenceService.getAttendance(attendanceId);
+        LoanDTO contract = contractService.getContract(occurrence.getInterContractCode());
+        RenegotiationEntity reneg = renegotiationRepository.findByAttendanceId(attendanceId);
+
+        CalculationEngineResponse response = recalculateInstallments(contract, request, reneg);
+
+        CalculateRenegResponseDTO calculateRenegResponseDTO = buildResponse(request, response, contract);
+
+        return calculateRenegResponseDTO;
+    }
+
+    private CalculateRenegResponseDTO buildResponse(CalculateRenegRequestDTO req, CalculationEngineResponse resp, LoanDTO contract) {
+        CalculateRenegResponseDTO dto = new CalculateRenegResponseDTO();
+
+        ListCalculatedOptionDTO optionOutputList = resp.getOptionOutputList();
+        CalculatedOptionDTO calculatedOptionDTO = optionOutputList.get(0);
+
+        dto.setIofRecalculated(getIofRecalculated(req, contract));
+
+        dto.setNewDeadline(calculatedOptionDTO.getOptionTermOutput().longValue());
+        dto.setNewInterestRate(calculatedOptionDTO.getCalcContractFee());
+
+        dto.setNewTotalDebt(calculatedOptionDTO.getTotalAmountFinanced());
+
+        List<NewPlanInstallmentDTO> installments = Lists.newArrayList();
+        if (calculatedOptionDTO.getPaymentPlanList() != null && !calculatedOptionDTO.getPaymentPlanList().isEmpty()) {
+            calculatedOptionDTO.getPaymentPlanList()
+                    .stream().filter(i -> i.getInstallmentNumber() != 0)
+                    .forEach(i -> {
+                NewPlanInstallmentDTO installmentDto = new NewPlanInstallmentDTO();
+                installmentDto.setNumber(i.getInstallmentNumber());
+                installmentDto.setDueDate(DateUtils.toString(i.getInstallmentDueDate()));
+                installmentDto.setValue(i.getInstallmentAmortizationQuotaAmount());
+                installmentDto.setFee(i.getInstallmentInterestQuotaAmount());
+                installmentDto.setTotal(i.getInstallmentPMTAmount());
+                // Não haverá tarifa na parcela para o produto Auto
+                installments.add(installmentDto);
+            });
+        }
+
+        dto.setNewPlanInstallments(installments);
+
+        RenegotiationDataDTO beforeDto = new RenegotiationDataDTO();
+        beforeDto.setDailyFee(req.getDailyInterest());
+        BigDecimal totalOverdue = BigDecimal.ZERO;
+        if (req.getOverdueInstallments() != null && req.getOverdueInstallments().isEmpty()) {
+            for (OverdueInstallmentDTO i : req.getOverdueInstallments()) {
+                totalOverdue = totalOverdue.add(i.getTotalValue());
+            }
+        }
+        beforeDto.setTotalOverdue(totalOverdue);
+        beforeDto.setTotalDebt(req.getTotalDebt());
+        beforeDto.setDeadline(getDeadLine(contract.getAmortizations(), DateUtils.toLocalDate(req.getBaseDate())));
+        beforeDto.setTaxFee(contract.getCalculationParam().getFeeInterestCurve1());
+        dto.setBeforeRenegotiation(beforeDto);
+
+        RenegotiationDataDTO afterDto = new RenegotiationDataDTO();
+        afterDto.setDailyFee(BigDecimal.ZERO); // Acabou de ser renegociado
+        afterDto.setTotalOverdue(BigDecimal.ZERO); // Acabou de ser renegociado, nao deve ter parcela em atraso
+        afterDto.setTotalDebt(calculatedOptionDTO.getTotalAmountFinanced());
+        afterDto.setDeadline(calculatedOptionDTO.getOptionTermOutput().longValue());
+        afterDto.setTaxFee(calculatedOptionDTO.getCalcContractFee());
+        dto.setAfterRenegotiation(afterDto);
+        dto.setDiscountPercentage(req.getDiscountPercentage());
+        dto.setFirstDueDate(req.getFirstDueDate());
+
+        return dto;
+    }
+
+    @Override
+    public BigDecimal getIofRecalculated(CalculateRenegRequestDTO request, LoanDTO contract) {
+
+        log.debug("getIofRecalculated contract:{}", contract);
+
+        ListTaxOutDTO iofTaxList = getIofTaxList(request, contract, false);
+
+        if (iofTaxList != null) {
+            return iofTaxList.stream()
+                    .map(TaxOutDTO::getTaxTotalAmount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+        return BigDecimal.ZERO;
+    }
+
+    @Override
+    public ListTaxOutDTO getIofTaxList(CalculateRenegRequestDTO request, LoanDTO contract, Boolean isIntegration) {
+
+        if (!CollectionUtils.isEmpty(request.getOverdueInstallments())) {
+
+            // Soma o valor das parcelas atrasadas (incorporadas na renegociacao)
+            BigDecimal overdueAmount = calculateIofOverdueAmount(request);
+            overdueAmount = isIntegration ? overdueAmount : overdueAmount.add(BigDecimalUtil.get(request.getDailyInterest()));
+            // Se não houver valor a incorporar nem pesquisa IOF
+            if (overdueAmount.compareTo(BigDecimal.ZERO) > 0) {
+
+                // Recupera parametros de IOF e IOF Adicional
+                List<AdditionalAttributeValueEntity> iof = additionalAttributeValueRepository.findAllByParameterIn(TAXES);
+
+                ListTaxDTO taxList = new ListTaxDTO();
+                if (iof != null && !iof.isEmpty()) {
+                    iof.forEach(tax -> {
+                        TaxDTO taxDto = new TaxDTO();
+                        taxDto.setSeqCalc(tax.getSequenceNumber());
+                        taxDto.setFrequencyTaxCalculation(tax.getCalculatedPeriodCode());
+                        taxDto.setTaxCode(tax.getParameter());
+                        taxDto.setTaxPaymentMethod(tax.getPaymentForm());
+                        taxDto.setTaxAliquot(tax.getAliquota());
+                        taxDto.setTaxCalculationBasis(tax.getCalcBaseType());
+                        taxDto.setTaxCalculationMethod(tax.getCalcForm());
+                        taxList.add(taxDto);
+                    });
+                }
+
+                BigDecimal amount = applyDiscountIfExists(overdueAmount,
+                        request.getDiscountPercentage(), BigDecimalUtil.get(request.getPrincipalBalance()));
+                // Chama calculadora **novamente**
+                CalculationEngineResponse resp = null;
+
+                if(amount.compareTo(BigDecimal.ZERO) > 0) {
+                    resp = recalculateInstallments(contract, request, taxList, amount);
+
+                    // Soma a taxa de IOF encontrada
+                    ListCalculatedOptionDTO optionOutputList = resp.getOptionOutputList();
+                    CalculatedOptionDTO calculatedOptionDTO = optionOutputList.get(0);
+                    if (!CollectionUtils.isEmpty(calculatedOptionDTO.getTotalTaxList())) {
+                        return calculatedOptionDTO.getTotalTaxList();
+                    }
+                }
+            }
+        }
+        return new ListTaxOutDTO();
+    }
+
+    private BigDecimal applyDiscountIfExists(BigDecimal overdueAmount, BigDecimal discountPercentage, @Valid BigDecimal principalBalance) {
+
+        BigDecimal newTotal = principalBalance.add(overdueAmount);
+
+        if(discountPercentage != null && discountPercentage.compareTo(BigDecimal.ZERO) > 0) {
+
+            BigDecimal iofAmount = overdueAmount.subtract(newTotal.
+                    multiply(discountPercentage.
+                            divide(new BigDecimal(100))));
+
+            return iofAmount.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : iofAmount ;
+        }
+
+        return overdueAmount;
+    }
+
+    @Override
+    public CalculationEngineResponse recalculateInstallments(LoanDTO contract, CalculateRenegRequestDTO renegRequest) {
+
+        BigDecimal financingAmount = getFinancingAmount(renegRequest, contract);
+        return this.recalculateInstallments(contract, renegRequest, new ListTaxDTO(), financingAmount);
+    }
+
+    @Override
+    public CalculationEngineResponse recalculateInstallments(LoanDTO contract, CalculateRenegRequestDTO renegRequest,
+                                                             RenegotiationEntity renegotiation) {
+
+        log.info("Iniciando <<recalculateInstallments>> : Fase informada: {}", renegRequest.getPhase());
+
+        BigDecimal financingAmount;
+
+        if (Objects.nonNull(renegRequest.getPhase()) &&
+                renegRequest.getPhase().equals(CamundaStagesEnum.REQUEST.getPortableCode())) {
+
+            log.info("Setando valores de consulta para fase de solicitação");
+            log.info("Valor financiado: {}", renegotiation.getNewBalanceAmountRequested());
+            financingAmount = renegotiation.getNewBalanceAmountRequested();
+
+            log.info("Prazo: {}", renegotiation.getNewDeadlineRequested());
+            renegRequest.setNewDeadline(renegotiation.getNewDeadlineRequested());
+
+            log.info("Juros: {}", renegotiation.getNewFeeTaxRequested());
+            renegRequest.setNewTax(renegotiation.getNewFeeTaxRequested());
+
+        }
+        else if (Objects.nonNull(renegRequest.getPhase()) &&
+                renegRequest.getPhase().equals(CamundaStagesEnum.REVISION.getPortableCode())) {
+
+            log.info("Setando valores de consulta para fase de validação");
+            log.info("Valor financiado: {}", renegotiation.getNewBalanceAmountGranted());
+            financingAmount = renegotiation.getNewBalanceAmountGranted();
+
+            log.info("Prazo: {}", renegotiation.getNewDeadlineGranted());
+            renegRequest.setNewDeadline(renegotiation.getNewDeadlineGranted());
+
+            log.info("Juros: {}", renegotiation.getNewFeeTaxGranted());
+            renegRequest.setNewTax(renegotiation.getNewFeeTaxGranted());
+
+        }
+        else {
+            log.info("Calculo acionado");
+            financingAmount = getFinancingAmount(renegRequest, contract);
+            log.info("Valor financiado: {}", financingAmount);
+        }
+
+        return this.recalculateInstallments(contract, renegRequest, new ListTaxDTO(), financingAmount);
+    }
+
+
+    @Override
+    public CalculationEngineResponse recalculateInstallments(LoanDTO contract, RenegotiationEntity renegotiation) {
+
+        CalculateRenegRequestDTO calculateRenegRequest = getCalculateRenegRequestDTO(renegotiation, contract.getId());
+        BigDecimal financingAmount = this.getFinancingAmount(calculateRenegRequest, contract);
+
+        return recalculateInstallments(contract, calculateRenegRequest, new ListTaxDTO(), financingAmount);
+    }
+
+    private CalculationEngineResponse recalculateInstallments(LoanDTO contract,
+                                                              CalculateRenegRequestDTO renegRequest,
+                                                              ListTaxDTO taxList,
+                                                              BigDecimal financingAmount) {
+
+        log.debug("recalculateInstallments - getFirstDueDate:{}", renegRequest.getFirstDueDate());
+        CalculationEngineResponse calculationEngineResponse;
+
+        CalculationEnginePayload payload = new CalculationEnginePayload();
+
+        // Mandatory fields
+        payload.setFinancingAmount(financingAmount);
+        payload.setContractDate(renegRequest.getBaseDate());
+
+        if (Objects.nonNull(renegRequest.getFirstDueDate()) && !renegRequest.getFirstDueDate().isEmpty()) {
+            log.debug("recalculateInstallments - getFirstDueDate is not null");
+            payload.setFirstDueDate(renegRequest.getFirstDueDate());
+            payload.setBaseInstallmentsDay(DateUtils.toLocalDate(renegRequest.getFirstDueDate()).getDayOfMonth());
+        } else {
+            payload.setFirstDueDate(DateUtils.toString(this.getFirstDueDate(renegRequest.getBaseDate(), contract)));
+            payload.setBaseInstallmentsDay(DateUtils.toLocalDate(payload.getFirstDueDate()).getDayOfMonth());
+        }
+
+        payload.setAdjustsInterestFinalInstallment(Boolean.TRUE);
+        payload.setLackType("AIQ"); //Cota de Juros
+        payload.setOptionsList(this.buildOptionList(contract, renegRequest, financingAmount));
+        payload.setTaxList(taxList);
+        payload.setTariffList(new ListTariffDTO());
+        // Set Default
+        this.setPayloadByDefault(payload);
+
+        // Set by Contract
+        if (contract.getCalculationParam() != null &&
+            !StringUtils.isEmpty(contract.getCalculationParam().getPlanType())) {
+
+            // Find contract's parameter plan
+            PlanParameterEntity planParameter = this.planParameterRepository
+                    .findByPlanType(contract.getCalculationParam().getPlanType());
+
+            if (planParameter != null) {
+                payload.setBase360MonthlyPlan(BooleanUtils.toBoolean(planParameter.getBase360Flag()));
+                payload.setDays360Conversion(BooleanUtils.toBoolean(planParameter.getBaseConv360Flag()));
+                payload.setLimitsInterestsFirstInstallment(BooleanUtils.toBoolean(planParameter.getFirstInstallmentInterestLimitFlag()));
+                payload.setInitialLinearProRataInterest(BooleanUtils.toBoolean(planParameter.getProrataLinearFlag()));
+                payload.setFirstFixedPeriod30(BooleanUtils.toBoolean(planParameter.getPassiveDays30Flag()));
+                payload.setAmortizationSystem(planParameter.getAmortizationSystem());
+                payload.setAscPlan(BooleanUtils.toBoolean(planParameter.getAscendingPlanFlag()));
+                payload.setLackInstallmentQuantity(planParameter.getFrequency());
+                payload.setGreaterFactor(planParameter.getGreaterFactor());
+                payload.setIntervalInstallment(planParameter.getInstallmentInterval());
+                payload.setTypePeriodicityPlan(planParameter.getPlanFrequencyType());
+            }
+        }
+
+        log.info("=============== Payload Calculadora: =================== \n:{}", JsonUtil.POJOToJSONString(payload));
+        calculationEngineResponse = this.occurrenceService.calculatorInstallments(payload);
+        log.info("=============== Payload Calculadora Response: =================== \n:{}", JsonUtil.POJOToJSONString(calculationEngineResponse));
+        return calculationEngineResponse;
+    }
+
+    private BigDecimal calculateIofOverdueAmount(CalculateRenegRequestDTO request) {
+        BigDecimal overdueAmount = BigDecimal.ZERO;
+
+        boolean partialSettlement = false;
+        List<OverdueInstallmentDTO> overdueInstallments = new ArrayList<>();
+
+        if (Objects.nonNull(request)) {
+            if (Boolean.TRUE.equals(request.isPartialSettlement())) {
+                partialSettlement = request.isPartialSettlement();
+            }
+            if (!request.getOverdueInstallments().isEmpty()){
+                overdueInstallments = request.getOverdueInstallments();
+            }
+        }
+        if(partialSettlement) {
+            overdueAmount = request.getOverdueInstallments().stream()
+                    .filter(installment -> installment.getPaymentType().equals(PaymentTypeEnum.PAGO_ATO.getValue()))
+                    .map(OverdueInstallmentDTO::getDiscount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+
+        return overdueAmount.add( overdueInstallments.stream()
+                .filter(installment -> installment.getPaymentType().equals(PaymentTypeEnum.INCORPORAR.getValue()))
+                .map(OverdueInstallmentDTO::getTotalValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
+    }
+
+    private CalculateRenegRequestDTO getCalculateRenegRequestDTO(RenegotiationEntity renegotiation, Long contractId){
+        return new CalculateRenegRequestDTO()
+                .baseDate(DateUtils.toString(renegotiation.getFinancialBaseDate()))
+                .newTax(Objects.isNull(renegotiation.getNewFeeTaxGranted()) ?
+                        renegotiation.getNewFeeTaxRequested() : renegotiation.getNewFeeTaxGranted())
+                .totalDebt(renegotiation.getPrincipalDebtAmount())
+                .principalBalance(renegotiation.getPrincipalBalanceAmount())
+                .dailyInterest(renegotiation.getPrincipalFeeAmount())
+                .newDeadline(Objects.isNull(renegotiation.getNewDeadlineGranted()) ?
+                        renegotiation.getNewDeadlineRequested() : renegotiation.getNewDeadlineGranted())
+                .discountPercentage(Objects.isNull(renegotiation.getDiscountPercentGranted()) ?
+                        renegotiation.getDiscountPercentGranted() : renegotiation.getDiscountPercentRequested())
+                .firstDueDate(DateUtils.toString(renegotiation.getFirstDueDate()))
+                .partialSettlement(Objects.isNull(renegotiation.getInstallments().stream().filter(r -> r.getPartialSettled().
+                        equals("S")).findFirst()
+                        .orElse(new RenegotiationInstallmentEntity()).getPartialSettled()) ? false : true)
+                .overdueInstallments(convertToInstallmentDTO(renegotiation.getInstallments(),
+                        contractId,renegotiation.getFinancialBaseDate()));
+    }
+
+    private List<OverdueInstallmentDTO> convertToInstallmentDTO(
+            List<RenegotiationInstallmentEntity> renegotiationInstallments, Long contractId, LocalDate financialBaseDate){
+
+        List<OverdueFeeDTO> overdueFees = occurrenceService.getOverdueInstallments(contractId, financialBaseDate);
+
+        return Optional.ofNullable(renegotiationInstallments).orElse(new ArrayList<>())
+                .stream()
+                .map(renegotiationInstallmentEntity -> new OverdueInstallmentDTO()
+                        .charges(renegotiationInstallmentEntity.getCharges())
+                        .discountPercentGranted(renegotiationInstallmentEntity.getDiscountPercentGranted())
+                        .discountPercentRequested(renegotiationInstallmentEntity.getDiscountPercentRequested())
+                        .discount(renegotiationInstallmentEntity.getDiscountAmountGranted())
+                        .dueDate(DateUtils.toString(renegotiationInstallmentEntity.getDueDate()))
+                        .totalValue(getOverdueFee(overdueFees,renegotiationInstallmentEntity).getTotal())
+                        .paymentType(renegotiationInstallmentEntity.getRenegotiationType()))
+                .collect(Collectors.toList());
+    }
+
+    private OverdueFeeDTO getOverdueFee(List<OverdueFeeDTO> overdueFees, RenegotiationInstallmentEntity installment) {
+        return overdueFees.stream().filter(overdueFee ->
+                        DateUtils.toLocalDate(overdueFee.getDueDate()).equals(installment.getDueDate())).findAny()
+                .orElseThrow(() -> new BusinessUncheckedException(INSTALLMENT_NOT_FOUND, "error.installment.not_found"));
+    }
+
+    private void setPayloadByDefault(CalculationEnginePayload payload) {
+        payload.setBase360MonthlyPlan(Boolean.TRUE);
+        payload.setDays360Conversion(Boolean.TRUE);
+        payload.setLimitsInterestsFirstInstallment(Boolean.FALSE);
+        payload.setInitialLinearProRataInterest(Boolean.FALSE);
+        payload.setFirstFixedPeriod30(Boolean.FALSE);
+        payload.setAmortizationSystem("NST");
+        payload.setAscPlan(Boolean.FALSE);
+        payload.setLackInstallmentQuantity(0);
+        payload.setGreaterFactor(BigDecimal.ZERO);
+        payload.setIntervalInstallment(1);
+        payload.setTypePeriodicityPlan("M");
+    }
+
+    private LocalDate getFirstDueDate(String baseDate, LoanDTO contract) {
+        Optional<AmortizationDTO> nextDueDateFromBaseDate = contract.getAmortizations().stream()
+                .filter(i -> i.getAmortizationDate().isAfter(DateUtils.toLocalDate(baseDate)))
+                .min(Comparator.comparing(AmortizationDTO::getAmortizationDate));
+
+        AmortizationDTO amortization = nextDueDateFromBaseDate.orElse(null);
+
+        if(amortization==null){
+            GenericParameterValuesDTO genericParameterValues = genericParameterService.getGenericParameterValues();
+            return DateUtils.toLocalDate(baseDate).plusDays(genericParameterValues.getMinimumDaysToFirstDueDate());
+        }else{
+            return amortization.getAmortizationDate();
+        }
+    }
+
+    private BigDecimal getFinancingAmount(CalculateRenegRequestDTO renegRequest, LoanDTO contract) {
+        if (Objects.nonNull(renegRequest.getOverdueInstallments())) {
+            BigDecimal financingAmount = BigDecimalUtil.get(renegRequest.getPrincipalBalance()).add(BigDecimalUtil.get(renegRequest.getDailyInterest()));
+            for (OverdueInstallmentDTO installment : renegRequest.getOverdueInstallments()) {
+                financingAmount = financingAmount.add(getAmount(installment));
+            }
+
+           // financingAmount = financingAmount.add(getIofRecalculated(renegRequest, contract));
+            financingAmount = calculateDiscount(renegRequest, financingAmount);
+            return financingAmount.add(getIofRecalculated(renegRequest, contract));
+        }
+
+        return calculateDiscount(renegRequest, renegRequest.getTotalDebt());
+    }
+
+        private BigDecimal calculateDiscount(CalculateRenegRequestDTO renegRequest, BigDecimal amount) {
+
+        BigDecimal totalDiscount = renegRequest.getOverdueInstallments() == null ? renegRequest.getTotalDiscount() : renegRequest.
+                getOverdueInstallments().stream().map(OverdueInstallmentDTO::getDiscount).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        amount = Objects.isNull(renegRequest.isPartialSettlement())
+                || !renegRequest.isPartialSettlement()   ? amount : amount.add(totalDiscount);
+
+        if (Objects.nonNull(renegRequest.getDiscountPercentage())
+                && renegRequest.getDiscountPercentage().doubleValue() > 0) {
+            amount =  amount.subtract(
+                    renegRequest
+                            .getDiscountPercentage()
+                            .movePointLeft(2)
+                            .multiply(amount));
+        }
+
+        return amount;
+    }
+
+    private BigDecimal getAmount(OverdueInstallmentDTO installment){
+        BigDecimal discount = Objects.isNull(installment.getDiscount()) ? BigDecimal.ZERO : installment.getDiscount();
+        if (PaymentTypeEnum.INCORPORAR.getValue().equals(installment.getPaymentType())){
+            return installment.getTotalValue().subtract(discount);
+        }else {
+            return BigDecimal.ZERO;
+        }
+    }
+
+    private ListCalculationOptionDTO buildOptionList(LoanDTO contract,
+                                                     CalculateRenegRequestDTO renegRequest,
+                                                     BigDecimal financingAmount) {
+        ListCalculationOptionDTO optionsList = new ListCalculationOptionDTO();
+
+        // Lista única
+        ListPeriodRateInDTO periodRateList = new ListPeriodRateInDTO();
+        PeriodRateInDTO periodRate = new PeriodRateInDTO();
+        periodRate.setInitialDate(DateUtils.toString(LocalDate.of(1900, 1, 1)));
+        periodRate.setFinalDate(DateUtils.toString(LocalDate.of(2999, 12, 31)));
+        periodRate.setShopkeeperLiabilityFee(BigDecimal.ZERO);
+
+        if (renegRequest.getNewTax() != null && (renegRequest.getNewTax().compareTo(BigDecimal.ZERO) > 0)) {
+            periodRate.setReturnFee(renegRequest.getNewTax());
+            periodRate.setContractFee(renegRequest.getNewTax());
+        } else {
+            if (contract.getCalculationParam() != null) {
+                periodRate.setReturnFee(contract.getCalculationParam().getFeeInterestCurve1());
+                periodRate.setContractFee(contract.getCalculationParam().getFeeInterestCurve1());
+            }
+        }
+
+        periodRateList.add(periodRate);
+
+        // Lista fixa
+        ListReturnRateEnum returnRateList = new ListReturnRateEnum();
+        returnRateList.add(ReturnRateEnum.AIRR360);
+        returnRateList.add(ReturnRateEnum.MIRR360);
+        returnRateList.add(ReturnRateEnum.MER);
+        returnRateList.add(ReturnRateEnum.AER);
+
+        CalculationOptionDTO calcOption = new CalculationOptionDTO();
+        calcOption.setFeeCodeType(FeeCodeEnum.ANNUAL.getValue()); //Efetiva Anual
+        calcOption.setSubsidyIndicator(Boolean.FALSE);
+        calcOption.setFailedOptionReturnIndicator(Boolean.TRUE); //deveria ser false, mas se passar false não retorna valor (a revisar)
+        calcOption.setMaximumApprovedAmount(financingAmount);
+        calcOption.setMaximumPMT(BigDecimal.ZERO);
+        calcOption.setMinimumPMT(BigDecimal.ZERO);
+        calcOption.setPeriodRateList(periodRateList);
+        calcOption.setReturnRateCodeList(returnRateList);
+        calcOption.setFlexInstallmentList(new ListFlexInstallmentDTO());
+        calcOption.setOptionTerm(getOptionTerm(renegRequest.getNewDeadline(),
+                contract.getAmortizations(),
+                DateUtils.toLocalDate(renegRequest.getBaseDate())).intValue());
+
+        optionsList.add(calcOption);
+
+        return optionsList;
+    }
+
+    private Long getOptionTerm(Long newDeadLine, List<AmortizationDTO> amortizations, LocalDate baseDate){
+        if (newDeadLine != null && newDeadLine > 0) {
+            return newDeadLine;
+        } else {
+           return getDeadLine(amortizations,baseDate);
+        }
+    }
+
+    private Long getDeadLine(List<AmortizationDTO> amortizations,LocalDate baseDate){
+        return amortizations.stream().filter(amortization -> amortization.getAmortizationDate().isAfter(baseDate)).count();
+    }
+
+}
