@@ -1,8 +1,9 @@
 import tkinter as tk
 import pyautogui
 import time
+from playsound import playsound
 
-imagem_path = '5.png'
+imagem_path = '0.png'
 # Criar uma janela sem borda com background transparente
 root = tk.Tk()
 root.overrideredirect(True)
@@ -10,13 +11,13 @@ root.wait_visibility(root)
 root.attributes('-alpha', 0.7)
 
 # Criar um label com o texto "Olá, mundo!"
-label = tk.Label(root, text="Aguardando jogo iniciar...", font=("Arial", 9), bg='white')
+label = tk.Label(root, text="Aguardando jogo iniciar...", font=("Arial", 8), bg='white')
 label.pack()
 
 # Exibir a janela sempre no topo
 root.lift()
 root.attributes("-topmost", True)
-root.geometry("+%d+%d" % (0, 0))
+root.geometry("+%d+%d" % (0, 300))
 
 
 def printrelogio():
@@ -30,28 +31,30 @@ def printrelogio():
 
     # calcula o tempo que passou
     tempo_decorrido = tempo_atual - tempo_inicial
-    print(tempo_decorrido)
+
+    if 50 < tempo_decorrido <= 59:
+        playsound('count.mp3.mp3')
+    elif tempo_decorrido == 60:
+        tempo_decorrido = 0
+
+
+printrelogio()
 
 
 def atualizar_contador():
-    regiao_busca = (586, 207, 76, 33)
-
+    regiao_busca = (1340, 1038, 28, 25)
     posicao = pyautogui.locateOnScreen(imagem_path, region=regiao_busca)
-    print(posicao)
+
     if posicao:
-        tempo_inicial = time.time()
-        # label.configure(text="Posição: " + str(posicao))
-        label['text'] = 'BUCETA!!!'
-        # printrelogio()
-        tempo_atual = time.time()
-        print(tempo_atual - tempo_inicial)
+        label['text'] = '1 - Agrar creeps na lane (treinar esse conceito & last hit)\n2 - Farmar o little camp sempre ' \
+                        'que possível e ir farmando a jungle na side lane\n3- Caso a lane esteja dificil e tenha o item ' \
+                        'de farm, farmar ancient + lane do top\n4- Caso a primeira torre do top tiver caído, ' \
+                        'farmar jungle do time inimigo, caso não, cogitar farmar propria jungle\n5- Wardar a jungle ' \
+                        'inimiga'
+        printrelogio()
     else:
-        tempo_inicial = time.time()
-        # label.configure(text="Aguardando nova ação...")
-        label['text'] = 'CU!!!'
-        tempo_atual = time.time()
-        print(tempo_atual - tempo_inicial)
-    root.after(10, atualizar_contador)
+        label['text'] = 'Aguardando inicio do jogo...'
+        root.after(10, atualizar_contador)
 
 
 root.after(10, atualizar_contador)
