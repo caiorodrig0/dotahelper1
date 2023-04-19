@@ -40,12 +40,13 @@ def printrelogio():
 
 printrelogio()
 
-
+#Box(left=1229, top=156, width=78, height=5)
 def atualizar_contador():
     regiao_busca = (1340, 1038, 28, 25)
-    posicao = pyautogui.locateOnScreen(imagem_path, region=regiao_busca)
+    posicao = pyautogui.locateOnScreen(imagem_path)
 
     if posicao:
+        print(posicao)
         label['text'] = '1 - Agrar creeps na lane (treinar esse conceito & last hit)\n2 - Farmar o little camp sempre ' \
                         'que possível e ir farmando a jungle na side lane\n3- Caso a lane esteja dificil e tenha o item ' \
                         'de farm, farmar ancient + lane do top\n4- Caso a primeira torre do top tiver caído, ' \
