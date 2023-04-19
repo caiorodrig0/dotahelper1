@@ -1,0 +1,8 @@
+BASE_URL = "https://api.stratz.com/api/v1"
+
+# Token de autenticação
+token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1laWQiOiJodHRwczovL3N0ZWFtY29tbXVuaXR5LmNvbS9vcGVuaWQvaWQvNzY1NjExOTc5NzcyMzI2NDYiLCJ1bmlxdWVfbmFtZSI6IlQxIEZha2VyIiwiU3ViamVjdCI6IjY1MGJjYWJmLWMyNzctNGI3Ny04YTc5LTViMDc2NDJjMWY0ZiIsIlN0ZWFtSWQiOiIxNjk2NjkxOCIsIm5iZiI6MTY2OTY0MDY1MCwiZXhwIjoxNzAxMTc2NjUwLCJpYXQiOjE2Njk2NDA2NTAsImlzcyI6Imh0dHBzOi8vYXBpLnN0cmF0ei5jb20ifQ.OzPhHpmFd0QCFesHqDrPgQGmiOlwLx3bEBzlkirV-1o'
+
+headers = {
+    'Authorization': 'Bearer ' + token
+}
