@@ -1,24 +1,38 @@
-import time
-from playsound import playsound
-from overlay.configoverlay import start_overlay_config
+import tkinter as tk
+
+# Criar uma janela sem borda com background transparente
+root = tk.Tk()
+root.overrideredirect(True)
+root.wait_visibility(root)
+root.attributes('-alpha', 0.7)
+
+# cria um widget de texto
+texto = tk.Text(root, wrap=tk.WORD, state='disabled')
+
+# adiciona o texto ao widget de texto
+texto.insert(tk.END,
+             "Este é um exemplo de texto longo que será quebrado em várias linhas caso ele ultrapasse o tamanho do widget.")
 
 
-def printrelogio():
-    tempo_inicial = time.time()
+# posiciona o widget de texto na janela
+texto.pack()
 
-    # espera 1 segundo
-    time.sleep(1)
+# Exibir a janela sempre no topo
+root.lift()
+root.attributes("-topmost", True)
+root.geometry("+%d+%d" % (0, 0))
+root.maxsize(width=220, height=550)
 
-    # obtém o tempo atual
-    tempo_atual = time.time()
-
-    # calcula o tempo que passou
-    tempo_decorrido = tempo_atual - tempo_inicial
-
-    if 50 < tempo_decorrido <= 59:
-        playsound('count.mp3.mp3')
-    elif tempo_decorrido == 60:
-        tempo_decorrido = 0
+# Função para alternar o tamanho do overlay
+def toggle_overlay(event):
+    if root.winfo_height() == 30:  # Se o overlay estiver retraído
+        root.geometry("220x550")  # Expandir o overlay
+    else:  # Se o overlay estiver expandido
+        root.geometry("200x30")
+        # Retrair o overlay
 
 
-start_overlay_config(67, 345001363)
+root.bind("<f>", toggle_overlay)
+
+# Iniciar o loop da janela
+root.mainloop()
