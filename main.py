@@ -21,4 +21,17 @@ def printrelogio():
         tempo_decorrido = 0
 
 
-start_overlay_config(67, 345001363, 44)
+# LS
+carry = 54
+# tiny
+mid = 19
+# brew
+off = 78
+# doctor
+sup4 = 30
+# ancient
+sup5 = 68
+
+start_overlay_config(67, [345001363, 293052390, 280511288, 196931374, 1060164724, 247751328, 877402200, 316501737,
+                          886742476, 97658618, 375507918, 321580662, 102458922],
+                     [carry, mid, off, sup4, sup5])

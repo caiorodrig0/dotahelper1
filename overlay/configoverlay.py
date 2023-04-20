@@ -5,7 +5,7 @@ imagem_path = '5.png'
 root = tk.Tk()
 
 
-def start_overlay_config(hero_id, player_id, hero_against):
+def start_overlay_config(hero_id, players, heroes_against):
     # Criar uma janela sem borda com background transparente
 
     root.overrideredirect(True)
@@ -25,7 +25,8 @@ def start_overlay_config(hero_id, player_id, hero_against):
 
     root.bind("<f>", toggle_overlay)
 
-    root.after(1, inicia_overlay(imagem_path=imagem_path, root=root, label=label, hero_id=hero_id, player_id=player_id, hero_against=hero_against))
+    root.after(1, inicia_overlay(imagem_path=imagem_path, root=root, label=label, hero_id=hero_id, players=players,
+                                 heroes_against=heroes_against))
 
     # Iniciar o loop da janela
     root.mainloop()

@@ -22,26 +22,32 @@ core_items = ['Falcon Blade', 'Power Treads', 'Mask of Madness', 'Boots of Trave
               'Satanic', 'Eye of Skadi', 'Mjollnir', 'Arcane Blink', 'Overwhelming Blink', 'Swift Blink']
 
 
-def check_if_heroes_in_the_match(match, hero_id, hero_against):
-    for player in match['players']:
-        if not player['isVictory']:
-            return False
+def check_if_heroes_in_the_match(match, hero_id, hero_against, player):
+
+    if 'imp' not in player or not player['isVictory'] or player['imp'] < 11 or player["heroId"] != hero_id:
+        return False
+    count = 0
     for pick in match['pickBans']:
-        if pick['isPick'] and pick['heroId'] == hero_against and pick['isRadiant'] != player['isRadiant'] and player[
-            "heroId"] == hero_id and player['imp'] > 20:
+        if pick['isPick']:
+            if pick['isRadiant'] != player['isRadiant']:
+                for hero in hero_against:
+                    if pick['heroId'] == hero:
+                        count = count + 1
+        if count == len(hero_against):
             return True
 
+    return False
 
-def search_match(player_id, hero_id, hero_against):
-    response = requests.get(f"{BASE_URL}/player/{player_id}/matches?take=100", headers=headers,
-                            verify=False)
-    matches = response.json()
 
-    for match in matches:
-        for hero_match in match["players"]:
-            if hero_match["steamAccountId"] == player_id and check_if_heroes_in_the_match(match, hero_id,
-                                                                                          hero_against):
-                return get_items_per_time(match['id'], player_id)
+def search_match(players, hero_id, hero_against):
+    for player_id in players:
+        response = requests.get(f"{BASE_URL}/player/{player_id}/matches?take=100", headers=headers,
+                                verify=False)
+        matches = response.json()
+        for match in matches:
+            for hero_match in match["players"]:
+                if hero_match["steamAccountId"] == player_id and check_if_heroes_in_the_match(match, hero_id, hero_against, hero_match):
+                    return get_items_per_time(match['id'], player_id)
 
 
 def check_if_core(_item):
@@ -59,7 +65,8 @@ def format_text_to_display(items_n_timing, match_id, date):
         elif item != '':
             formated_items += item + ' \n'
 
-    return formated_items + "\n\n\n\n" + "MatchID: " + str(match_id) + "\n\nData: " + str(datetime.datetime.fromtimestamp(date))
+    return formated_items + "\n\n\n\n" + "MatchID: " + str(match_id) + "\n\nData: " + str(
+        datetime.datetime.fromtimestamp(date))
 
 
 def get_items_per_time(matchid, playerid):
