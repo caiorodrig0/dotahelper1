@@ -5,7 +5,7 @@ imagem_path = '5.png'
 root = tk.Tk()
 
 
-def start_overlay_config(hero_id, player_id):
+def start_overlay_config(hero_id, player_id, hero_against):
     # Criar uma janela sem borda com background transparente
 
     root.overrideredirect(True)
@@ -25,14 +25,14 @@ def start_overlay_config(hero_id, player_id):
 
     root.bind("<f>", toggle_overlay)
 
-    root.after(1, inicia_overlay(imagem_path=imagem_path, root=root, label=label, hero_id=hero_id, player_id=player_id))
+    root.after(1, inicia_overlay(imagem_path=imagem_path, root=root, label=label, hero_id=hero_id, player_id=player_id, hero_against=hero_against))
 
     # Iniciar o loop da janela
     root.mainloop()
 
 
 def toggle_overlay(event):
-    if root.winfo_height() == 1:  # Se o overlay estiver retraído
+    if root.winfo_height() == 30:  # Se o overlay estiver retraído
         root.geometry("220x550")  # Expandir o overlay
     else:  # Se o overlay estiver expandido
-        root.geometry("200x1")  # Retrair o overlay
+        root.geometry("200x30")  # Retrair o overlay

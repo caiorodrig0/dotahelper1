@@ -22,16 +22,26 @@ core_items = ['Falcon Blade', 'Power Treads', 'Mask of Madness', 'Boots of Trave
               'Satanic', 'Eye of Skadi', 'Mjollnir', 'Arcane Blink', 'Overwhelming Blink', 'Swift Blink']
 
 
-def search_match(player_id, hero_id):
-    response = requests.get(f"{BASE_URL}/player/{player_id}/matches?take=30", headers=headers,
+def check_if_heroes_in_the_match(match, hero_id, hero_against):
+    for player in match['players']:
+        if not player['isVictory']:
+            return False
+    for pick in match['pickBans']:
+        if pick['isPick'] and pick['heroId'] == hero_against and pick['isRadiant'] != player['isRadiant'] and player[
+            "heroId"] == hero_id and player['imp'] > 20:
+            return True
+
+
+def search_match(player_id, hero_id, hero_against):
+    response = requests.get(f"{BASE_URL}/player/{player_id}/matches?take=100", headers=headers,
                             verify=False)
     matches = response.json()
 
     for match in matches:
         for hero_match in match["players"]:
-            if hero_match["steamAccountId"] == player_id:
-                if hero_match["heroId"] == hero_id:
-                    return get_items_per_time(match['id'], player_id)
+            if hero_match["steamAccountId"] == player_id and check_if_heroes_in_the_match(match, hero_id,
+                                                                                          hero_against):
+                return get_items_per_time(match['id'], player_id)
 
 
 def check_if_core(_item):
@@ -40,7 +50,7 @@ def check_if_core(_item):
             return item
 
 
-def format_text_to_display(items_n_timing):
+def format_text_to_display(items_n_timing, match_id, date):
     formated_items = ''
     for index, item in enumerate(items_n_timing):
         if index % 2 == 0 and item != '':
@@ -49,7 +59,7 @@ def format_text_to_display(items_n_timing):
         elif item != '':
             formated_items += item + ' \n'
 
-    return formated_items
+    return formated_items + "\n\n\n\n" + "MatchID: " + str(match_id) + "\n\nData: " + str(datetime.datetime.fromtimestamp(date))
 
 
 def get_items_per_time(matchid, playerid):
@@ -61,7 +71,7 @@ def get_items_per_time(matchid, playerid):
             for items in players['stats']['itemPurchases']:
                 if check_if_core(get_name_by_id(items['itemId'])):
                     items_n_timing += (str(datetime.timedelta(seconds=items['time'])), get_name_by_id(items['itemId']))
-            return format_text_to_display(items_n_timing)
+            return format_text_to_display(items_n_timing, matchid, data['startDateTime'])
 
 
 def get_name_by_id(search_id):

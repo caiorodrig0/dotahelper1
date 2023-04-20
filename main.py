@@ -21,4 +21,4 @@ def printrelogio():
         tempo_decorrido = 0
 
 
-start_overlay_config(67, 345001363)
+start_overlay_config(67, 345001363, 44)
