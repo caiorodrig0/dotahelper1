@@ -23,31 +23,38 @@ core_items = ['Falcon Blade', 'Power Treads', 'Mask of Madness', 'Boots of Trave
 
 
 def check_if_heroes_in_the_match(match, hero_id, hero_against, player):
+    heroes_found = list(
+        filter(lambda x: x.get('isPick', True) and x.get('heroId') in hero_against and x.get('isRadiant') != player[
+            'isRadiant'], match['pickBans']))
 
-    if 'imp' not in player or not player['isVictory'] or player['imp'] < 11 or player["heroId"] != hero_id:
+    if not player['isVictory']:
         return False
-    count = 0
-    for pick in match['pickBans']:
-        if pick['isPick']:
-            if pick['isRadiant'] != player['isRadiant']:
-                for hero in hero_against:
-                    if pick['heroId'] == hero:
-                        count = count + 1
-        if count == len(hero_against):
-            return True
+
+    if len(heroes_found) == len(hero_against):
+        return True
 
     return False
 
 
+def heroes_against_str(heroes_against):
+    heroes_str = "'&opposingHeroId='"
+    for hero in heroes_against:
+        heroes_str += str(hero) + "&"
+
+    return heroes_str
+
+
 def search_match(players, hero_id, hero_against):
     for player_id in players:
-        response = requests.get(f"{BASE_URL}/player/{player_id}/matches?take=100", headers=headers,
-                                verify=False)
+        response = requests.get(
+            f"{BASE_URL}/player/{player_id}/matches?take=100&heroId={hero_id}",
+            headers=headers,
+            verify=False)
         matches = response.json()
+
         for match in matches:
-            for hero_match in match["players"]:
-                if hero_match["steamAccountId"] == player_id and check_if_heroes_in_the_match(match, hero_id, hero_against, hero_match):
-                    return get_items_per_time(match['id'], player_id)
+            if 'pickBans' in match and check_if_heroes_in_the_match(match, hero_id, hero_against, match['players'][0]):
+                return get_items_per_time(match['id'], player_id)
 
 
 def check_if_core(_item):
