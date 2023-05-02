@@ -1,6 +1,10 @@
 import datetime
+import json
 
 import requests
+
+import apirequests.globalvariables
+from apirequests import globalvariables
 from apirequests.configstratz import BASE_URL, headers
 
 responseitem = requests.get(f"{BASE_URL}/Item", headers=headers, verify=False)
@@ -30,31 +34,49 @@ def check_if_heroes_in_the_match(match, hero_id, hero_against, player):
     if not player['isVictory']:
         return False
 
-    if len(heroes_found) == len(hero_against):
+    if len(heroes_found) > globalvariables.heroes_found_global:
+        globalvariables.heroes_found_global = len(heroes_found)
+        globalvariables.best_match = match
+        globalvariables.player_id_global = player['steamAccountId']
+
+    if len(heroes_found) == 5 or len(hero_against) <= globalvariables.heroes_found_global:
         return True
 
     return False
 
 
-def heroes_against_str(heroes_against):
-    heroes_str = "'&opposingHeroId='"
-    for hero in heroes_against:
-        heroes_str += str(hero) + "&"
+def get_global_variables():
+    return [globalvariables.best_match, globalvariables.heroes_found_global, globalvariables.player_id_global]
 
-    return heroes_str
+
+def get_heroes_list():
+    response = requests.get(
+        f"{BASE_URL}/Hero",
+        headers=headers,
+        verify=False)
+    return response.json()
 
 
 def search_match(players, hero_id, hero_against):
     for player_id in players:
-        response = requests.get(
-            f"{BASE_URL}/player/{player_id}/matches?take=100&heroId={hero_id}",
-            headers=headers,
-            verify=False)
-        matches = response.json()
+        try:
+            response = requests.get(
+                f"{BASE_URL}/player/{player_id}/matches?take=100&heroId={hero_id}",
+                headers=headers,
+                verify=False)
+            matches = response.json()
+        except json.decoder.JSONDecodeError as e:
+            print("Erro ao decodificar JSON: ", e)
+            continue
+        except requests.exceptions.RequestException as e:
+            print("Erro na solicitação: ", e)
+            continue
 
         for match in matches:
-            if 'pickBans' in match and check_if_heroes_in_the_match(match, hero_id, hero_against, match['players'][0]):
-                return get_items_per_time(match['id'], player_id)
+            if 'pickBans' in match and check_if_heroes_in_the_match(match, hero_id, hero_against,
+                                                                    match['players'][0]):
+                return get_items_per_time(apirequests.globalvariables.best_match['id'],
+                                          apirequests.globalvariables.player_id_global)
 
 
 def check_if_core(_item):

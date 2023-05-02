@@ -1,5 +1,7 @@
 import time
 from playsound import playsound
+
+from apirequests.stratz import get_heroes_list
 from overlay.configoverlay import start_overlay_config
 
 
@@ -21,17 +23,27 @@ def printrelogio():
         tempo_decorrido = 0
 
 
-# MEDUSA
-carry = 12
-# SILENCER
-mid = 76
-# PUDGE
-off = 36
-# SK
-sup4 = 0
-# DISRUPTOR
-sup5 = 0
+heroes_list = get_heroes_list()
 
-start_overlay_config(138, [345001363, 293052390, 95825708, 280511288, 196931374, 1060164724, 247751328, 877402200, 316501737,
-                          886742476, 97658618, 375507918, 321580662, 102458922],
+
+def get_hero_id(hero_name):
+   return list(filter(lambda x: x[1]['displayName'] == hero_name, heroes_list.items()))[0][1]['id']
+
+
+# MEDUSA
+carry = get_hero_id('Anti-Mage')
+# SILENCER
+mid = get_hero_id('Silencer')
+# PUDGE
+off = get_hero_id('Alchemist')
+# SK
+sup4 = get_hero_id('Witch Doctor')
+# DISRUPTOR
+sup5 = get_hero_id('Mirana')
+
+start_overlay_config(get_hero_id('Medusa'),
+                     [886742476, 106573901, 193564777, 176155470, 194979527, 392565237, 375507918, 293731272, 898754153, 172099728, 97658618,
+                      177411785, 110583422, 320252024, 113995822, 26316691, 315657960, 165390194, 127617979, 114619230, 132309493,
+                      61049916, 245373129, 132851371, 1171243748, 81475303, 321580662, 86745912, 206642367, 181716137,
+                      100058342, 122049498, 162610516, 111114687, 141690233, 196442862, 167976729, 148215639, 116934015, 155162307],
                      [carry, mid, off, sup4, sup5])
