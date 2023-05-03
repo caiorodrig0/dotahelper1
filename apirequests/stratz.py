@@ -1,6 +1,8 @@
 import datetime
 import json
 
+import pymongo
+from mongita import MongitaClientDisk
 import requests
 
 import apirequests.globalvariables
@@ -9,7 +11,11 @@ from apirequests.configstratz import BASE_URL, headers
 
 responseitem = requests.get(f"{BASE_URL}/Item", headers=headers, verify=False)
 item_data = responseitem.json()
-rocksdb_conn = rocksdb.DB("matches_cache.db", rocksdb.Options(create_if_missing=True))
+
+client = MongitaClientDisk()
+db = client.playersdb
+mangoose = db.mangoose_collection
+
 
 core_items = ['Falcon Blade', 'Power Treads', 'Mask of Madness', 'Boots of Travel', 'Witch Blade',
               'Eul\'s Scepter of Divinity',
@@ -60,34 +66,40 @@ def get_heroes_list():
 
 def get_matches(player_id, hero_id):
     cache_key = f"{player_id}_{hero_id}"
-    if cache_key in apirequests.globalvariables.matches_cache:
-        return apirequests.globalvariables.matches_cache[cache_key]
+    if cache_key in apirequests.globalvariables.matches_cache and apirequests.globalvariables.matches_cache[cache_key] is not None and apirequests.globalvariables.matches_cache[cache_key]['matches'] is not None:
+        return apirequests.globalvariables.matches_cache[cache_key]['matches']
     return {}
 
 
 def fill_matches(players, hero_id):
-    for player_id in players:
-        cache_key = f"{player_id}_{hero_id}"
-        matches = rocksdb_conn.get(cache_key.encode("utf-8"))
-        if matches is None:
-            try:
-                response = requests.get(
-                f"{BASE_URL}/player/{player_id}/matches?take=100&heroId={hero_id}",
+    _matches = {}
+    cache_keys = [f"{player_id}_{hero_id}" for player_id in players]
+    matches = dbpymongo.matches.find({"_id": {"$in": cache_keys}})
+    for match in matches:
+        cache_key = match["_id"]
+        _matches[cache_key] = match["matches"]
+        cache_keys.remove(cache_key)
+
+    for cache_key in cache_keys:
+        try:
+            response = requests.get(
+                f"{BASE_URL}/player/{cache_key.split('_')[0]}/matches?take=100&heroId={hero_id}",
                 headers=headers,
                 verify=False
             )
-                matches = response.json()
-                rocksdb_conn.put(cache_key.encode("utf-8"), json.dumps(matches).encode("utf-8"))
-            except json.decoder.JSONDecodeError as e:
-                print("Erro ao decodificar JSON: ", e)
-            except requests.exceptions.RequestException as e:
-                print("Erro na solicitação: ", e)
-        else:
-            matches = json.loads(matches.decode("utf-8"))
-            apirequests.globalvariables.matches_cache[cache_key] = matches
+            matches = response.json()
+            mangoose.insert_one({"_id": cache_key, "matches": matches})
+            _matches[cache_key] = matches
+        except (json.decoder.JSONDecodeError, requests.exceptions.RequestException) as e:
+            mangoose.insert_one({"_id": cache_key, "matches": []})
+            print(f"Erro ao obter as partidas do jogador {cache_key.split('_')[0]}: {e}")
+
+    return _matches
+
+
 
 def search_match(players, hero_id, hero_against):
-    fill_matches(players, hero_id)
+    apirequests.globalvariables.matches_cache = fill_matches(players, hero_id)
     for player_id in players:
         matches = get_matches(player_id, hero_id)
         for match in matches:

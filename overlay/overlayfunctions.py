@@ -1,4 +1,4 @@
-import pyautogui
+
 from apirequests.stratz import search_match, get_global_variables, get_items_per_time
 
 
