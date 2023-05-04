@@ -29,7 +29,7 @@ def start_overlay_config(hero_id, players, heroes_against):
                                  heroes_against=heroes_against))
 
     # Iniciar o loop da janela
-    root.mainloop()
+    #root.mainloop()
 
 
 def toggle_overlay(event):

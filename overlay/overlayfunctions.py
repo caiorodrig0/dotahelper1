@@ -12,9 +12,9 @@ def inicia_overlay(imagem_path, root, label, hero_id, players, heroes_against):
             heroes_against.pop(-1)
             response_strataz = search_match(players, hero_id, heroes_against)
 
-        if response_strataz is not None:
-            label['text'] = response_strataz
-        else:
-            label['text'] = get_items_per_time(matchid=get_global_variables()[0]['id'], playerid=get_global_variables()[1])
-    else:
-        root.after(1, inicia_overlay(imagem_path, root, label, hero_id, players, heroes_against))
+        #if response_strataz is not None:
+            #label['text'] = response_strataz
+        #else:
+            #label['text'] = get_items_per_time(matchid=get_global_variables()[0]['id'], playerid=get_global_variables()[1])
+    #else:
+       # root.after(1, inicia_overlay(imagem_path, root, label, hero_id, players, heroes_against))

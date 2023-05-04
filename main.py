@@ -35,6 +35,6 @@ def get_players_id():
         print(f"Erro na solicitação: {response.status_code}")
 
 
-start_overlay_config(get_hero_id('Medusa'),
+start_overlay_config(get_hero_id('Anti-Mage'),
                      get_players_id(),
                      [carry, mid, off, sup4, sup5])

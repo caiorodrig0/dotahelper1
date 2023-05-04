@@ -4,6 +4,8 @@ import json
 import pymongo
 from mongita import MongitaClientDisk
 import requests
+from pymongo import MongoClient
+from pymongo.server_api import ServerApi
 
 import apirequests.globalvariables
 from apirequests import globalvariables
@@ -12,10 +14,9 @@ from apirequests.configstratz import BASE_URL, headers
 responseitem = requests.get(f"{BASE_URL}/Item", headers=headers, verify=False)
 item_data = responseitem.json()
 
-client = MongitaClientDisk()
-db = client.playersdb
-mangoose = db.mangoose_collection
-
+uri = "mongodb+srv://cai0orama:QeZNVPSZkFCCogg1@cluster0.j23jf85.mongodb.net/?retryWrites=true&w=majority"
+client = MongoClient(uri, server_api=ServerApi('1'))
+db = client['dotahelper']
 
 core_items = ['Falcon Blade', 'Power Treads', 'Mask of Madness', 'Boots of Travel', 'Witch Blade',
               'Eul\'s Scepter of Divinity',
@@ -66,40 +67,39 @@ def get_heroes_list():
 
 def get_matches(player_id, hero_id):
     cache_key = f"{player_id}_{hero_id}"
-    if cache_key in apirequests.globalvariables.matches_cache and apirequests.globalvariables.matches_cache[cache_key] is not None and apirequests.globalvariables.matches_cache[cache_key]['matches'] is not None:
-        return apirequests.globalvariables.matches_cache[cache_key]['matches']
+    matches = list(filter(lambda x: x['_id'] == cache_key, apirequests.globalvariables.matches_cache))
+
+    if matches is not None and len(matches) > 0:
+        return matches[0]['matches']
     return {}
 
 
-def fill_matches(players, hero_id):
+def fill_matches(players, hero_id, use_cache):
     _matches = {}
-    cache_keys = [f"{player_id}_{hero_id}" for player_id in players]
-    matches = dbpymongo.matches.find({"_id": {"$in": cache_keys}})
-    for match in matches:
-        cache_key = match["_id"]
-        _matches[cache_key] = match["matches"]
-        cache_keys.remove(cache_key)
 
-    for cache_key in cache_keys:
-        try:
-            response = requests.get(
-                f"{BASE_URL}/player/{cache_key.split('_')[0]}/matches?take=100&heroId={hero_id}",
-                headers=headers,
-                verify=False
-            )
-            matches = response.json()
-            mangoose.insert_one({"_id": cache_key, "matches": matches})
-            _matches[cache_key] = matches
-        except (json.decoder.JSONDecodeError, requests.exceptions.RequestException) as e:
-            mangoose.insert_one({"_id": cache_key, "matches": []})
-            print(f"Erro ao obter as partidas do jogador {cache_key.split('_')[0]}: {e}")
+    cache_keys = [f"{player_id}_{hero_id}" for player_id in players]
+    if use_cache:
+        _matches = db.matches.find({"_id": {"$in": cache_keys}})
+    else:
+        for cache_key in cache_keys:
+            try:
+                response = requests.get(
+                    f"{BASE_URL}/player/{cache_key.split('_')[0]}/matches?take=100&heroId={hero_id}",
+                    headers=headers,
+                    verify=False
+                )
+                matches = response.json()
+                db.matches.insert_one({"_id": cache_key, "matches": matches})
+                _matches[cache_key] = matches
+            except (json.decoder.JSONDecodeError, requests.exceptions.RequestException) as e:
+                db.matches.insert_one({"_id": cache_key, "matches": []})
+                print(f"Erro ao obter as partidas do jogador {cache_key.split('_')[0]}: {e}")
 
     return _matches
 
 
-
 def search_match(players, hero_id, hero_against):
-    apirequests.globalvariables.matches_cache = fill_matches(players, hero_id)
+    apirequests.globalvariables.matches_cache = fill_matches(players, hero_id, False)
     for player_id in players:
         matches = get_matches(player_id, hero_id)
         for match in matches:
