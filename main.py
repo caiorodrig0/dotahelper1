@@ -9,20 +9,21 @@ heroes_list = get_heroes_list()
 # Obtém a data de 10 dias atrás
 ten_days_ago = datetime.datetime.now() - datetime.timedelta(days=10)
 
+
 def get_hero_id(hero_name):
     return list(filter(lambda x: x[1]['displayName'] == hero_name, heroes_list.items()))[0][1]['id']
 
 
 # MEDUSA
-carry = get_hero_id('Faceless Void')
+carry = get_hero_id('Slark')
 # SILENCER
-mid = get_hero_id('Outworld Destroyer')
+mid = get_hero_id('Zeus')
 # PUDGE
-off = get_hero_id('Bristleback')
+off = get_hero_id('Underlord')
 # SK
-sup4 = get_hero_id('Nyx Assassin')
+sup4 = get_hero_id('Undying')
 # DISRUPTOR
-sup5 = get_hero_id('Witch Doctor')
+sup5 = get_hero_id('Enchantress')
 
 
 def get_players_id():
@@ -31,12 +32,12 @@ def get_players_id():
     if response.status_code == 200:
         pro_players = response.json()
         player_ids = [player['account_id'] for player in pro_players if
-                      datetime.datetime.fromtimestamp(player['last_match_time']) > ten_days_ago]
+                      str(player['last_match_time']) > str(ten_days_ago)]
         return player_ids
     else:
         print(f"Erro na solicitação: {response.status_code}")
 
 
-start_overlay_config(get_hero_id('Medusa'),
+start_overlay_config(get_hero_id('Anti-Mage'),
                      get_players_id(),
                      [carry, mid, off, sup4, sup5])

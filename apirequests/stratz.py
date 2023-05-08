@@ -40,7 +40,7 @@ def check_if_heroes_in_the_match(match, hero_id, hero_against):
     if not match['isVictory']:
         return False
 
-    if len(heroes_found) > globalvariables.heroes_found_global:
+    if len(heroes_found) > globalvariables.heroes_found_global and [hero for hero in heroes_found if hero['heroId'] == hero_against[0]]:
         globalvariables.heroes_found_global = len(heroes_found)
         globalvariables.best_match = match
         globalvariables.player_id_global = match['steamAccountId']
@@ -93,6 +93,7 @@ def fill_matches(players, hero_id, use_cache):
                                                match.get("pickBans", []) != [] and
                                                match["players"][0].get("imp", 0) > 0 and
                                                match["players"][0]["isVictory"] and
+                                               match["players"][0]["lane"] == 1 and
                                                datetime.datetime.fromtimestamp(match['startDateTime']) > ten_days_ago, matches))
 
                 filtered_matches = [{"id": match["id"],
@@ -119,7 +120,7 @@ def fill_matches(players, hero_id, use_cache):
 
 
 def search_match(players, hero_id, hero_against):
-    apirequests.globalvariables.matches_cache = fill_matches(players, hero_id, False)
+    apirequests.globalvariables.matches_cache = fill_matches(players, hero_id, True)
     for player_id in players:
         matches = get_matches(player_id, hero_id)
         for match in matches:
@@ -144,7 +145,7 @@ def format_text_to_display(items_n_timing, match_id, date):
             formated_items += item + ' \n'
 
     return formated_items + "\n\n\n\n" + "MatchID: " + str(match_id) + "\n\nData: " + str(
-        datetime.datetime.fromtimestamp(date))
+        str(datetime.datetime.fromtimestamp(date)) + "\n\nHeroes found: " + str(globalvariables.heroes_found_global))
 
 
 def get_items_per_time(matchid, playerid):
